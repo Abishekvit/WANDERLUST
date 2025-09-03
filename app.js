@@ -3,12 +3,18 @@ const app = express();
 const mongoose = require("mongoose");
 const MONGO_URL = 'mongodb://127.0.0.1:27017/wanderlust';
 const Listing = require("./models/listing.js");
+const Review = require("./models/review.js");
 const path = require("path");
 const ejsMate = require("ejs-mate");
 const wrapAsync = require("./utils/wrapAsync.js");
 const methodOverride = require("method-override");
 const ExpressError = require("./utils/ExpressError.js");
-const {listingSchema} = require("./schema.js");
+const {listingSchema,reviewSchema} = require("./schema.js");
+
+const passport = require("passport");
+const LocalStrategy = require("passport-local");
+const User = require("./models/user.js");
+
 app.use(methodOverride("_method"));
 app.set("view engine", "ejs");
 app.set("views",path.join(__dirname,"views"));
@@ -16,6 +22,17 @@ app.use(express.urlencoded({extended : true}));
 app.use(express.json());
 app.use(express.static(path.join(__dirname,"public")));
 app.engine("ejs",ejsMate);
+
+const listingRouter = require("./routes/listing.js");
+const reviewRouter = require("./routes/review.js");
+const userRouter = require("./routes/user.js");
+
+// EXPRESS SESSION
+const session = require("express-session");
+const flash = require("connect-flash");
+
+
+
 async function main() {
     await mongoose.connect(MONGO_URL);
 };
@@ -42,79 +59,50 @@ app.listen(1010, () =>{
 //     await sampleListing.save();
 //     res.send("successful testing");
 // });
-
-const validateListing = (req,res,next)=>{
-    let result =listingSchema.validate(req.body);
-    console.log(result);
-    if(result.error){
-        let errMsg = result.error.details.map((el)=> el.message).join(",");
-        next(new ExpressError(400,result.error));
+// 
+const sessionOptions ={
+    secret:"mysupersecretcode",
+    resave:false,
+    saveUninitialized:true,
+    cookie:{
+        expires: Date.now() + 1000*60*60*24*7,
+        maxAge: 1000*60*60*24*7,
+        httpOnly:true
     }
-    else{
-        next();
-    }
-}
-// INDEX ROUTE
-app.get("/listing", async (req,res) =>{
-    const allListings = await Listing.find();
-    res.render("listings/index.ejs",{allListings});
-});
+};
+app.use(session(sessionOptions));
+app.use(flash());
 
-// NEW ROUTE
-app.get("/listing/new", async (req,res) =>{
-    res.render("listings/new.ejs");
-});
+// Passport Configuration
+app.use(passport.initialize());
+app.use(passport.session());
+passport.use(new LocalStrategy(User.authenticate()));
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
-// SHOW ROUTE
-app.get("/listing/:id", async (req,res) =>{
-    let {id} = req.params;
-    const listing = await Listing.findById(id);
-    res.render("listings/show.ejs",{listing});
-});
 
-// CREATE ROUTE
-app.post("/listing",validateListing, (async (req,res,next)=>{
-    // let {title,description,image,price,country,location} = req.body;
-    try{
-    const newListing = new Listing (req.body.listing);
-    await newListing.save();
-    console.log(req.body);
-    res.redirect("/listing");
-} catch(err){
-    // if(!(req.body.listing)){
-    next(new ExpressError(454,"Missing data from client side"));
-    // }
-}
-}))
-
-// EDIT ROUTE
-app.get("/listing/:id/edit",async (req,res) =>{
-    let {id} = req.params;
-    const listing = await Listing.findById(id);
-    res.render("listings/edit.ejs",{listing});
+app.use((req,res,next) =>{
+    res.locals.success = req.flash("success");
+    res.locals.error = req.flash("error");
+    next();
 })
 
-// UPDATE ROUTE
-app.patch("/listing/:id", async (req,res)=>{
-    let {id} =req.params;
-    Listing.findByIdAndUpdate(id, req.body.listing)
-    .then((res)=>{
-        console.log(res);
-    })
-    .catch((err) =>{
-        console.log(err);
-    })
-    res.redirect(`/listing/${id}`);
-})
 
-// DELETE ROUTE
-app.delete("/listing/:id",async (req,res)=>{
-    let {id} =req.params;
-    let deletedListing = await Listing.findByIdAndDelete(id);
-    console.log(deletedListing);
-    res.redirect("/listing");
+// Passport
+app.get("/demouser",async (req,res) =>{
+    let fakeUser =new User({
+        username:"demouser",
+        email:"student@gmail.com"
+    });
+    let registeredUser = await User.register(fakeUser,"helloworld");
+    res.send(registeredUser);
+});
 
-})
+
+app.use("/listing",listingRouter);
+app.use("/listing/:id/review", reviewRouter);
+app.use("/", userRouter);
+
 app.get("/:any",(req,res,next) =>{
     next(new ExpressError(500,"Page Not Found!"));
 });
